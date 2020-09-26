@@ -18,6 +18,8 @@ void intHandler(int dummy) {
 	running = 0;
 }
 
+typedef void (*thread_func_t)(void *arg);
+
 /**
 * Encapsulates the properties of the server.
 */
@@ -28,7 +30,18 @@ typedef struct server {
 } server_t;
 
 
-typedef void (*thread_func_t)(void *arg);
+// HTTP Structures
+struct request {
+	char * method;
+	char * filename;
+};
+
+struct response {
+	int status_code;
+	char * content_type;
+	long content_length;
+	char * data;
+};
 
 /**
 * Encapsulates work for the threadpool to do
@@ -261,6 +274,23 @@ int server_accept(server_t* server);
 */
 void handle_http(void * args);
 
+/*
+* reads a request
+*/
+struct request read_request(const char * buffer);
+
+/*
+* sends a response
+*/
+
+int send_response(const struct response response_data, const int connection);
+
+/**
+* Loads a file into memory and passes a pointer to it.
+*/
+
+void load_file(const char * filename, long * fsize, char ** buffer);
+
 /**
  * Main server routine.
  *
@@ -275,11 +305,14 @@ void handle_http(void * args);
 #define PORT 8080
 #define MAX_BACKLOG 50
 #define MAX_THREADS 4
-#define TIMEOUT 1000
+
+// the time before a socket is closed.
+#define TIMEOUT 30
 
 int main() {
-	signal(SIGINT, intHandler);
+	//signal(SIGINT, intHandler);
 
+	printf("Sparrow Version 1.1\n");
 	printf("HTTP Server starting...\n");
 
 	ThreadPool *tm;
@@ -296,7 +329,8 @@ int main() {
 
 	err = server_listen(&server);
 	if (err) {
-		printf("Failed to listen on address 0.0.0.0:%c \n", PORT);
+		printf("Failed to listen on address 0.0.0.0:%d \n", PORT);
+		perror("Failed");
 		return err;
 	}
 
@@ -379,10 +413,14 @@ int server_accept(server_t* server) {
 		printf("Connection failed...\n");
 		return -1;
 	}
-	printf("Server accepted the clent...\n");
+	printf("Server accepted the client...\n");
 
 	return connection_fd;	
 }
+
+// error messages
+#define MSG_404 " 404 Not Found\nContent-Type: text/plain\nContent-Length: 14\n\n404 Not found!"
+#define MSG_501 " 501 Not Implemented\nContent-Type: text/plain\nContent-Length: 20\n\n501 Not implemented!"
 
 /**
 * Handle the request
@@ -390,129 +428,244 @@ int server_accept(server_t* server) {
 * 501 = Not Implemented
 */
 void handle_http(void * args) {
+	printf("Process ID: %ld\n", (long) getpid());
+
 	int* val = args;
 
 	// extract the connection from val
 	int connection = *val;
-	bool active = true;
 
-	time_t start_time;
-	time(&start_time);
+	// the buffer to read into
+	char read_buf[1024] = {0};
 
-	while(active) {
-		// read request
-		char read_buf[1024] = {0};
-
-		int valread = read( connection, read_buf, 1024 );
-		printf("%s\n", read_buf);
+	int valread = read( connection, read_buf, 1024 );
+	printf("%s\n", read_buf);
 		
-		if(valread < 0) 
-		{
-			printf("No bytes to read.");
-			active = false;
-			continue;
-		}
-
-		char * msg = calloc(9, sizeof(char)); // allocate array to store msg. Header + body currently set to HTTP/1.1
-
-		strncpy(msg, "HTTP/1.1", 8);
-		// process response
-
-		// read the method
-		if(strncmp(read_buf, "GET", 3) == 0) {
-			// get request, we can handle that.
-			printf("GET request\n");
-
-			// read in the resource to get
-
-			// find the string containing the resource from / to ?
-			char * beginning = strchr(read_buf+4, '/');
-			char * ending = strchr(read_buf+4, ' ');
-
-			char * filename = calloc((ending - beginning) + 3 + 1, sizeof(char));
-			
-			strcpy(filename, "web");
-
-			strncat(filename, read_buf + 4, (ending - beginning));
-			printf("File: %s Access: %d\n", filename, access(filename, F_OK | R_OK));
-
-			if(access(filename, F_OK | R_OK) != -1) { 
-				FILE* response_file = fopen(filename,"r");
-				printf("File opened: %d\n", response_file == NULL);
-
-				printf("Getting size of file\n");
-				fseek(response_file, 0, SEEK_END);
-				long fsize = ftell(response_file);
-				fseek(response_file, 0, SEEK_SET);  /* same as rewind(f); */
-
-				printf("Reading file into buffer\n");
-				char *file_buffer = malloc(fsize + 1);
-				fread(file_buffer, 1, fsize, response_file);
-
-				fclose(response_file);
-				free(filename);
-
-				printf("Setting end of file buffer.\n");
-				file_buffer[fsize] = 0;
-
-				//printf("Here's the file\n");
-				//puts(file_buffer);
-
-				char * extra_headers = calloc(51 + sizeof(long), sizeof(char));
-
-				sprintf(extra_headers, " 200 OK\nContent-Type: text/html\nContent-Length: %ld\n\n", fsize);
-
-				// add response headers
-				msg = realloc(msg, (sizeof(char) * (strlen(msg) + strlen(extra_headers) + strlen(file_buffer) + 1)));
-				strcat(msg, extra_headers);
-				strcat(msg, file_buffer);
-				free(file_buffer);
-
-			} else {
-				printf("Could not find file.\n");
-				perror("Failed");
-				errno = 0;
-				msg = realloc(msg, (sizeof(char) * (strlen(msg) + 16 + 1)));
-				strcat(msg, " 404 Not Found\n\n");
-			}
-
-
-		} else {
-			// unimplemented, will get to it soon.
-			/*write(connection, "HTTP/1.1 501 Not Implemented", 28);
-			sync();
-			continue;*/			
-			msg = realloc(msg, (sizeof(char) * (strlen(msg) + 22 + 1)));
-			strcat(msg, " 501 Not Implemented\n\n");
-		}
-
-		// process response
-		//char msg[76] = "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: 12\n\nHello World!";
-	
-		// send buffer to client
-		printf("Response: %s\n\nLength: %lu\n", msg, strlen(msg));
-
-		int error = write(connection, msg, strlen(msg));
-		if(error == -1) {
-			perror("Failed");
-			printf("Error writing message\n");
-		}
-
-		free(msg);
-
-		//sync();
-
-		// timeout
-		if(time(NULL) - start_time > TIMEOUT) {
-			printf("Timed out");
-			active = false;
-		}
+	if(valread <= 0) 
+	{
+		printf("No bytes to read.\n");
+		close(connection);
+		return;
 	}
 
-	printf("Cleaning up");
+	printf("Read: %d\nGetting request and response data.\n", valread);
+
+	// read the buffer, so make a struct to hold request and result
+	struct request request_data = read_request(read_buf);
+	struct response response_data;
+
+	//char * msg = calloc(9, sizeof(char)); // allocate array to store msg. Header + body currently set to HTTP/1.1
+
+	//strncpy(msg, "HTTP/1.1", 8);
+	// process response
+
+	// read the method
+	if(strncmp(request_data.method, "GET", 3) == 0) {
+		// get request, we can handle that.
+		printf("GET request\n");
+
+		// read in the resource to get
+
+		// get the string containing the resource from / to ?
+		//printf("File: %s Access: %d\n", request_data.filename, access(request_data.filename, F_OK | R_OK));
+
+		long fsize = 0;
+
+		char * file_buffer = NULL; 
+		load_file(request_data.filename, &fsize, &file_buffer);
+
+		if(file_buffer != NULL) { 
+
+			char * file_encoding;
+
+			// if the filename contains .png, then the type is image/webp
+			if(strstr(request_data.filename, ".png") != NULL) {
+				file_encoding = calloc(sizeof("image/png"), sizeof(char));
+				strncpy(file_encoding, "image/png", sizeof("image/png"));
+			} else if(strstr(request_data.filename, ".jpeg") != NULL) {
+				file_encoding = calloc(sizeof("image/jpeg"), sizeof(char));
+				strncpy(file_encoding, "image/jpeg", sizeof("image/jpeg"));
+			}  else if(strstr(request_data.filename, ".jpg") != NULL) {
+				file_encoding = calloc(sizeof("image/jpg"), sizeof(char));
+				strncpy(file_encoding, "image/jpg", sizeof("image/jpg"));
+			} else if(strstr(request_data.filename, ".gif") != NULL) {
+				file_encoding = calloc(sizeof("image/gif"), sizeof(char));
+				strncpy(file_encoding, "image/gif", sizeof("image/gif"));
+			} else if (strstr(request_data.filename, ".html") != NULL) {
+				// else it is text/html
+				file_encoding = calloc(sizeof("text/html"), sizeof(char));
+				strncpy(file_encoding, "text/html", sizeof("text/html"));
+			} else if (strstr(request_data.filename, ".css") != NULL) {
+				// else it is text/css
+				file_encoding = calloc(sizeof("text/css"), sizeof(char));
+				strncpy(file_encoding, "text/css", sizeof("text/css"));
+			} else if (strstr(request_data.filename, ".js") != NULL) {
+				// else it is text/js
+				file_encoding = calloc(sizeof("text/js"), sizeof(char));
+				strncpy(file_encoding, "text/js", sizeof("text/js"));
+			} else {
+				// else it is text/plain
+				file_encoding = calloc(sizeof("text/plain"), sizeof(char));
+				strncpy(file_encoding, "text/plain", sizeof("text/plain"));
+			}
+
+			response_data.content_type = file_encoding;
+			response_data.content_length = fsize;
+			response_data.status_code = 200;
+			response_data.data = file_buffer;
+
+			/*char * extra_headers = calloc(41 + strlen(file_encoding) + sizeof(long), sizeof(char));
+
+			sprintf(extra_headers, " 200 OK\nContent-Type: %s\nContent-Length: %ld\n\n", file_encoding, fsize);
+			*/
+
+			// add response headers
+			/*msg = realloc(msg, (sizeof(char) * (strlen(msg) + strlen(extra_headers) + strlen(file_buffer) + 1)));
+			strcat(msg, extra_headers);
+			strncat(msg, file_buffer, fsize);*/
+
+			//free(file_buffer);
+
+		} else {
+			char * error_404 = calloc(sizeof("404 Not found") + 1, sizeof(char));
+			strncpy(error_404, "404 Not found", sizeof("404 Not found"));
+
+			char * content_t_404 = calloc(sizeof("text/plain") + 1, sizeof(char));
+			strncpy(content_t_404, "text/plain", sizeof("text/plain"));
+
+			response_data.content_type = content_t_404;
+			response_data.content_length = strlen(error_404);
+			response_data.status_code = 404;
+			response_data.data = error_404;
+		}
+
+	} else {
+		// unimplemented, will get to it soon.
+		/*write(connection, "HTTP/1.1 501 Not Implemented", 28);
+			sync();
+			continue;*/			
+			char * error_501 = calloc(sizeof("501 Not implemented") + 1, sizeof(char));
+			strncpy(error_501, "501 Not implemented", sizeof("501 Not implemented"));
+
+			char * content_t_501 = calloc(sizeof("text/plain") + 1, sizeof(char));
+			strncpy(content_t_501, "text/plain", sizeof("text/plain"));
+
+			response_data.content_type = content_t_501;
+			response_data.content_length = strlen(error_501);
+			response_data.status_code = 501;
+			response_data.data = error_501;
+	}
+
+	// process response
+	//char msg[76] = "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: 12\n\nHello World!";
+	
+	// send buffer to client
+	//int error = write(connection, msg, strlen(msg));
+	int error = send_response(response_data, connection);
+	if(error == -1) {
+		perror("Failed");
+		printf("Error writing message\n");
+	}
+	//sync();
+
+	printf("Cleaning up\n");
 	// clean up by closing the connection and freeing the args
 	close(connection);
 
+	free(request_data.method);
+	free(request_data.filename);
+
+	free(response_data.content_type);
+	free(response_data.data);
+
 	free(args);
 	//return error;
+}
+
+
+// has a method and filename
+struct request read_request(const char * buffer) 
+{
+	struct request request_data = {NULL};
+
+	char * method_end = strchr(buffer, ' ');
+
+	request_data.method = calloc((method_end - buffer) + 1, sizeof(char));
+	strncpy(request_data.method, buffer, (method_end - buffer));
+
+	char * filename_beginning = strchr(buffer + strlen(request_data.method) + 1, '/');
+	char * filename_end = strchr(buffer + strlen(request_data.method) + 1, ' ');
+
+	request_data.filename = calloc((filename_end - filename_beginning) + sizeof("web") + 1, sizeof(char));
+			
+	strcpy(request_data.filename, "web");
+
+	strncat(request_data.filename, buffer + strlen(request_data.method) + 1, (filename_end - filename_beginning));
+
+	printf("Parsed Method: %s| Filename: %s|\n", request_data.method, request_data.filename);
+
+	return request_data;
+}
+
+// response constists of status code, content length, content type, data
+int send_response(const struct response response_data, const int connection) 
+{
+	//printf("Response: Content-Type: %s, Content-Length: %ld, Status Code: %d\n Response: %s", response_data.content_type, response_data.content_length, response_data.status_code, response_data.data);
+
+	char * msg;
+
+	// headers
+	char * headers = calloc(sizeof("HTTP/1.1  OK\nContent-Type: \nContent-Length: \n\n") + strlen(response_data.content_type) + sizeof(long) + sizeof(int) + 1, sizeof(char));
+
+	sprintf(headers, "HTTP/1.1 %d OK\nContent-Type: %s\nContent-Length: %ld\n\n", response_data.status_code, response_data.content_type, response_data.content_length);
+
+	//printf("Headers: %s\n", headers);
+
+	// allocatate msg and input reponse parts
+	msg = calloc(strlen(headers) + response_data.content_length + 1, sizeof(char));
+	strncpy(msg, headers, strlen(headers));
+
+	memcpy(msg + strlen(headers), response_data.data, response_data.content_length);
+
+	printf("Response: %s\nLength: %lu\n", msg, strlen(headers) + response_data.content_length);
+
+	int bytes = write(connection, msg, strlen(headers) + response_data.content_length);
+	
+	free(headers);
+	free(msg);
+
+	return bytes;
+}
+
+void load_file(const char * filename, long * fsize, char ** buffer)
+{
+	char * file_buffer = NULL;
+
+	if(access(filename, F_OK | R_OK) != -1) { 
+		FILE* response_file = fopen(filename,"rb");
+		//printf("File opened: %d\n", response_file == NULL);
+
+		//printf("Getting size of file\n");
+		fseek(response_file, 0, SEEK_END);
+		*fsize = ftell(response_file);
+		fseek(response_file, 0, SEEK_SET);  /* same as rewind(f); */
+
+		printf("Size: %ld\n", (*fsize));
+
+		//printf("Reading file into buffer\n");
+		file_buffer = malloc((*fsize) + 1);
+		fread(file_buffer, 1, (*fsize), response_file);
+
+		fclose(response_file);
+
+		//printf("Setting end of file buffer.\n");
+		file_buffer[(*fsize)] = 0;
+
+	} else {
+		printf("Could not find file.\n");
+		perror("Failed");
+		errno = 0;
+	}
+
+	(*buffer) = file_buffer;
 }

@@ -306,7 +306,7 @@ void load_file(const char * filename, long * fsize, char ** buffer);
 #define MAX_THREADS 4
 
 int main() {
-	printf("Sparrow Version 1.1\n");
+	printf("Sparrow Version 0.1\n");
 	printf("HTTP Server starting...\n");
 
 	ThreadPool *tm;
@@ -489,7 +489,7 @@ void handle_http(void * args) {
 				response_data.content_type = "text/css";
 			} else if (strstr(request_data.filename, ".js") != NULL) {
 				// else it is text/js
-				response_data.content_type = "text/js";
+				response_data.content_type = "text/javascript";
 			} else {
 				// else it is text/plain
 				response_data.content_type = "text/plain";
@@ -500,55 +500,23 @@ void handle_http(void * args) {
 			response_data.status_code = 200;
 			response_data.data = file_buffer;
 
-			/*char * extra_headers = calloc(41 + strlen(file_encoding) + sizeof(long), sizeof(char));
-
-			sprintf(extra_headers, " 200 OK\nContent-Type: %s\nContent-Length: %ld\n\n", file_encoding, fsize);
-			*/
-
-			// add response headers
-			/*msg = realloc(msg, (sizeof(char) * (strlen(msg) + strlen(extra_headers) + strlen(file_buffer) + 1)));
-			strcat(msg, extra_headers);
-			strncat(msg, file_buffer, fsize);*/
-
-			//free(file_buffer);
-
 		} else {
-			/*
-			char * error_404 = calloc(sizeof("404 Not found") + 1, sizeof(char));
-			strncpy(error_404, "404 Not found", sizeof("404 Not found"));
-
-			char * content_t_404 = calloc(sizeof("text/plain") + 1, sizeof(char));
-			strncpy(content_t_404, "text/plain", sizeof("text/plain"));
-
-			response_data.content_type = content_t_404;
-			response_data.content_length = strlen(error_404);
-			response_data.status_code = 404;
-			response_data.data = error_404;*/
 			response_data = build_response(404, "text/plain", "404 Not Found!", sizeof("404 Not Found!") - 1);
 		}
 
-	} else {
-		// unimplemented, will get to it soon.
-		/*write(connection, "HTTP/1.1 501 Not Implemented", 28);
-			sync();
-			continue;*/			
+	} else {	
 			response_data = build_response(501, "text/plain", "501 Not Implemented!", sizeof("501 Not Implemented!") - 1);
 	}
 
-	// process response
-	//char msg[76] = "HTTP/1.1 200 OK\nContent-Type: text/html\nContent-Length: 12\n\nHello World!";
-	
-	// send buffer to client
-	//int error = write(connection, msg, strlen(msg));
+	// send the response
 	int error = send_response(response_data, connection);
 	if(error == -1) {
 		perror("Failed");
 		printf("Error writing message\n");
 	}
-	//sync();
 
 	printf("Cleaning up\n");
-	// clean up by closing the connection and freeing the args
+	// clean up by closing the connection and freeing memory
 	close(connection);
 
 	free(request_data.method);
@@ -637,7 +605,7 @@ int send_response(const struct response response_data, const int connection)
 
 	memcpy(msg + strlen(headers), response_data.data, response_data.content_length);
 
-	printf("Response: %s\nLength: %lu\n", msg, strlen(headers) + response_data.content_length);
+	//printf("Response: %s\nLength: %lu\n", msg, strlen(headers) + response_data.content_length);
 
 	int bytes = write(connection, msg, strlen(headers) + response_data.content_length);
 	
@@ -689,7 +657,7 @@ char * get_error_msg(int status_code)
 		case 304:
 			return "Not Modified";
 		case 305:
-			return "Use Proxy"
+			return "Use Proxy";
 		case 306:
 			return "Switch Proxy";
 		case 307:
@@ -765,7 +733,7 @@ char * get_error_msg(int status_code)
 		case 504:
 			return "Gateway Timeout";
 		case 505:
-			return "HTTP Version Not SUpported";
+			return "HTTP Version Not Supported";
 		case 506:
 			return "Variant Also Negotiates";
 		case 507:

@@ -576,11 +576,27 @@ struct request read_request(const char * buffer)
 	char * filename_beginning = strchr(buffer + strlen(request_data.method) + 1, '/');
 	char * filename_end = strchr(buffer + strlen(request_data.method) + 1, ' ');
 
-	request_data.filename = calloc((filename_end - filename_beginning) + sizeof("web") + 1, sizeof(char));
-			
-	strcpy(request_data.filename, "web");
+	//printf("Filename End: %c\n", *(filename_end-1));
 
-	strncat(request_data.filename, buffer + strlen(request_data.method) + 1, (filename_end - filename_beginning));
+	if(*(filename_end-1) == '/') {
+		// uh oh, its a directory
+		printf("We think this is a directory, so we are going to return index.html\n");
+		request_data.filename = calloc((filename_end - filename_beginning) + sizeof("web") + sizeof("index.html") + 1, sizeof(char));
+			
+		strcpy(request_data.filename, "web");
+
+		strncat(request_data.filename, buffer + strlen(request_data.method) + 1, (filename_end - filename_beginning));
+
+		strncat(request_data.filename, "index.html", sizeof("index.html"));
+
+	} else {
+
+		request_data.filename = calloc((filename_end - filename_beginning) + sizeof("web") + 1, sizeof(char));
+			
+		strcpy(request_data.filename, "web");
+
+		strncat(request_data.filename, buffer + strlen(request_data.method) + 1, (filename_end - filename_beginning));
+	}
 
 	printf("Parsed Method: %s| Filename: %s|\n", request_data.method, request_data.filename);
 

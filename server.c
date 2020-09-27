@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/mman.h>
 #include <arpa/inet.h> // inet_addr
 #include <unistd.h>    // write and sleep
 #include <pthread.h>
@@ -12,12 +13,6 @@
 #include <errno.h>
 
 // global variables
-static volatile int running = 1;
-
-void intHandler(int dummy) {
-	running = 0;
-}
-
 typedef void (*thread_func_t)(void *arg);
 
 /**
@@ -285,6 +280,10 @@ struct request read_request(const char * buffer);
 
 int send_response(const struct response response_data, const int connection);
 
+struct response build_response(int status_code, char * response_type, char * data, long data_length);
+
+char * get_error_msg(int status_code);
+
 /**
 * Loads a file into memory and passes a pointer to it.
 */
@@ -306,12 +305,7 @@ void load_file(const char * filename, long * fsize, char ** buffer);
 #define MAX_BACKLOG 50
 #define MAX_THREADS 4
 
-// the time before a socket is closed.
-#define TIMEOUT 30
-
 int main() {
-	//signal(SIGINT, intHandler);
-
 	printf("Sparrow Version 1.1\n");
 	printf("HTTP Server starting...\n");
 
@@ -334,7 +328,7 @@ int main() {
 		return err;
 	}
 
-	while(running) {
+	while(1) {
 		int * connection_ptr;
 
 		connection_ptr = malloc(sizeof(connection_ptr));
@@ -418,10 +412,6 @@ int server_accept(server_t* server) {
 	return connection_fd;	
 }
 
-// error messages
-#define MSG_404 " 404 Not Found\nContent-Type: text/plain\nContent-Length: 14\n\n404 Not found!"
-#define MSG_501 " 501 Not Implemented\nContent-Type: text/plain\nContent-Length: 20\n\n501 Not implemented!"
-
 /**
 * Handle the request
 * 200 = OK
@@ -476,40 +466,36 @@ void handle_http(void * args) {
 
 		if(file_buffer != NULL) { 
 
-			char * file_encoding;
+			//char * file_encoding;
 
 			// if the filename contains .png, then the type is image/webp
 			if(strstr(request_data.filename, ".png") != NULL) {
-				file_encoding = calloc(sizeof("image/png"), sizeof(char));
-				strncpy(file_encoding, "image/png", sizeof("image/png"));
+				// png image??
+				response_data.content_type = "image/png";
 			} else if(strstr(request_data.filename, ".jpeg") != NULL) {
-				file_encoding = calloc(sizeof("image/jpeg"), sizeof(char));
-				strncpy(file_encoding, "image/jpeg", sizeof("image/jpeg"));
+				// jpeg image?
+				response_data.content_type = "image/jpeg";
 			}  else if(strstr(request_data.filename, ".jpg") != NULL) {
-				file_encoding = calloc(sizeof("image/jpg"), sizeof(char));
-				strncpy(file_encoding, "image/jpg", sizeof("image/jpg"));
+				// jpg image?
+				response_data.content_type = "image/jpg";
 			} else if(strstr(request_data.filename, ".gif") != NULL) {
-				file_encoding = calloc(sizeof("image/gif"), sizeof(char));
-				strncpy(file_encoding, "image/gif", sizeof("image/gif"));
+				// gif image?
+				response_data.content_type = "image/gif";
 			} else if (strstr(request_data.filename, ".html") != NULL) {
 				// else it is text/html
-				file_encoding = calloc(sizeof("text/html"), sizeof(char));
-				strncpy(file_encoding, "text/html", sizeof("text/html"));
+				response_data.content_type = "text/html";
 			} else if (strstr(request_data.filename, ".css") != NULL) {
 				// else it is text/css
-				file_encoding = calloc(sizeof("text/css"), sizeof(char));
-				strncpy(file_encoding, "text/css", sizeof("text/css"));
+				response_data.content_type = "text/css";
 			} else if (strstr(request_data.filename, ".js") != NULL) {
 				// else it is text/js
-				file_encoding = calloc(sizeof("text/js"), sizeof(char));
-				strncpy(file_encoding, "text/js", sizeof("text/js"));
+				response_data.content_type = "text/js";
 			} else {
 				// else it is text/plain
-				file_encoding = calloc(sizeof("text/plain"), sizeof(char));
-				strncpy(file_encoding, "text/plain", sizeof("text/plain"));
+				response_data.content_type = "text/plain";
 			}
 
-			response_data.content_type = file_encoding;
+			//response_data.content_type = file_encoding;
 			response_data.content_length = fsize;
 			response_data.status_code = 200;
 			response_data.data = file_buffer;
@@ -527,6 +513,7 @@ void handle_http(void * args) {
 			//free(file_buffer);
 
 		} else {
+			/*
 			char * error_404 = calloc(sizeof("404 Not found") + 1, sizeof(char));
 			strncpy(error_404, "404 Not found", sizeof("404 Not found"));
 
@@ -536,7 +523,8 @@ void handle_http(void * args) {
 			response_data.content_type = content_t_404;
 			response_data.content_length = strlen(error_404);
 			response_data.status_code = 404;
-			response_data.data = error_404;
+			response_data.data = error_404;*/
+			response_data = build_response(404, "text/plain", "404 Not Found!", sizeof("404 Not Found!") - 1);
 		}
 
 	} else {
@@ -544,16 +532,7 @@ void handle_http(void * args) {
 		/*write(connection, "HTTP/1.1 501 Not Implemented", 28);
 			sync();
 			continue;*/			
-			char * error_501 = calloc(sizeof("501 Not implemented") + 1, sizeof(char));
-			strncpy(error_501, "501 Not implemented", sizeof("501 Not implemented"));
-
-			char * content_t_501 = calloc(sizeof("text/plain") + 1, sizeof(char));
-			strncpy(content_t_501, "text/plain", sizeof("text/plain"));
-
-			response_data.content_type = content_t_501;
-			response_data.content_length = strlen(error_501);
-			response_data.status_code = 501;
-			response_data.data = error_501;
+			response_data = build_response(501, "text/plain", "501 Not Implemented!", sizeof("501 Not Implemented!") - 1);
 	}
 
 	// process response
@@ -575,8 +554,9 @@ void handle_http(void * args) {
 	free(request_data.method);
 	free(request_data.filename);
 
-	free(response_data.content_type);
-	free(response_data.data);
+	//free(response_data.content_type);
+	if(response_data.status_code == 200)
+		munmap(response_data.data, response_data.content_length);
 
 	free(args);
 	//return error;
@@ -608,6 +588,18 @@ struct request read_request(const char * buffer)
 }
 
 // response constists of status code, content length, content type, data
+struct response build_response(int status_code, char * response_type, char * data, long data_length) 
+{
+	struct response response_data = {0};
+	response_data.status_code = status_code;
+	response_data.content_type = response_type;
+	response_data.data = data;
+	response_data.content_length = data_length;
+
+	return response_data;
+}
+
+// response constists of status code, content length, content type, data
 int send_response(const struct response response_data, const int connection) 
 {
 	//printf("Response: Content-Type: %s, Content-Length: %ld, Status Code: %d\n Response: %s", response_data.content_type, response_data.content_length, response_data.status_code, response_data.data);
@@ -615,9 +607,11 @@ int send_response(const struct response response_data, const int connection)
 	char * msg;
 
 	// headers
-	char * headers = calloc(sizeof("HTTP/1.1  OK\nContent-Type: \nContent-Length: \n\n") + strlen(response_data.content_type) + sizeof(long) + sizeof(int) + 1, sizeof(char));
+	char * msg_code = get_error_msg(response_data.status_code);
 
-	sprintf(headers, "HTTP/1.1 %d OK\nContent-Type: %s\nContent-Length: %ld\n\n", response_data.status_code, response_data.content_type, response_data.content_length);
+	char * headers = calloc(sizeof("HTTP/1.1  \r\nContent-Type: \r\nContent-Length: \r\n\r\n") + strlen(response_data.content_type) + strlen(msg_code) + sizeof(long) + sizeof(int) + 1, sizeof(char));
+
+	sprintf(headers, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %ld\r\n\r\n", response_data.status_code, msg_code, response_data.content_type, response_data.content_length);
 
 	//printf("Headers: %s\n", headers);
 
@@ -637,9 +631,22 @@ int send_response(const struct response response_data, const int connection)
 	return bytes;
 }
 
-void load_file(const char * filename, long * fsize, char ** buffer)
+char * get_error_msg(int status_code) 
 {
-	char * file_buffer = NULL;
+	switch(status_code) {
+		case 200:
+			return "Ok";
+		case 404:
+			return "Not found!";
+		case 501:
+			return "Not Implemented!";
+		default:
+			return "Unknown";
+	}
+}
+
+void load_file(const char * filename, long * fsize, char ** buffer)
+{	
 
 	if(access(filename, F_OK | R_OK) != -1) { 
 		FILE* response_file = fopen(filename,"rb");
@@ -653,19 +660,18 @@ void load_file(const char * filename, long * fsize, char ** buffer)
 		printf("Size: %ld\n", (*fsize));
 
 		//printf("Reading file into buffer\n");
-		file_buffer = malloc((*fsize) + 1);
-		fread(file_buffer, 1, (*fsize), response_file);
+		(*buffer) = mmap(NULL, (*fsize), PROT_READ, MAP_PRIVATE, fileno(response_file), 0);
+		//fread(file_buffer, 1, (*fsize), response_file);
 
 		fclose(response_file);
 
 		//printf("Setting end of file buffer.\n");
-		file_buffer[(*fsize)] = 0;
+		//file_buffer[(*fsize)] = 0;
 
 	} else {
+		(*buffer) = NULL;	
 		printf("Could not find file.\n");
 		perror("Failed");
 		errno = 0;
 	}
-
-	(*buffer) = file_buffer;
 }

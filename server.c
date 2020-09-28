@@ -269,6 +269,8 @@ int server_accept(server_t* server);
 */
 void handle_http(void * args);
 
+char * cgi_script(struct request request_data):
+
 /*
 * reads a request
 */
@@ -304,7 +306,12 @@ void load_file(const char * filename, long * fsize, char ** buffer);
 #define PORT 8080
 #define MAX_BACKLOG 50
 #define MAX_THREADS 4
+#define SERVER_ID "Sparrow/0.1"
+#define BUFFER_SIZE 256
 
+/**
+* Main function
+*/
 int main() {
 	printf("Sparrow Version 0.1\n");
 	printf("HTTP Server starting...\n");
@@ -362,6 +369,10 @@ int main() {
 	return err;
 }
 
+/**
+* Start the server on a port 
+*/
+
 int server_listen(server_t* server) {
 	server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -398,6 +409,9 @@ int server_listen(server_t* server) {
 	return 0;
 }
 
+/**
+* Accept a connection
+*/
 int server_accept(server_t* server) {
 	struct sockaddr_in client_addr;
 	int len = sizeof(client_addr);
@@ -416,6 +430,7 @@ int server_accept(server_t* server) {
 * Handle the request
 * 200 = OK
 * 501 = Not Implemented
+* This method is called by a thread
 */
 void handle_http(void * args) {
 	printf("Process ID: %ld\n", (long) getpid());
@@ -530,7 +545,9 @@ void handle_http(void * args) {
 	//return error;
 }
 
-
+/**
+* Gets a request structure from a connection buffer
+*/
 // has a method and filename
 struct request read_request(const char * buffer) 
 {
@@ -571,6 +588,10 @@ struct request read_request(const char * buffer)
 	return request_data;
 }
 
+/**
+* A helper method so that I don't have a lot of duplicate code
+* 
+*/
 // response constists of status code, content length, content type, data
 struct response build_response(int status_code, char * response_type, char * data, long data_length) 
 {
@@ -582,7 +603,9 @@ struct response build_response(int status_code, char * response_type, char * dat
 
 	return response_data;
 }
-
+/**
+* Formats and sends a reponse to a connection with the correct headers and data
+*/
 // response constists of status code, content length, content type, data
 int send_response(const struct response response_data, const int connection) 
 {
@@ -593,15 +616,22 @@ int send_response(const struct response response_data, const int connection)
 	// headers
 	char * msg_code = get_error_msg(response_data.status_code);
 
-	char * headers = calloc(sizeof("HTTP/1.1  \r\nContent-Type: \r\nContent-Length: \r\n\r\n") + strlen(response_data.content_type) + strlen(msg_code) + sizeof(long) + sizeof(int) + 1, sizeof(char));
+	time_t now = time(&now);
 
-	sprintf(headers, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %ld\r\n\r\n", response_data.status_code, msg_code, response_data.content_type, response_data.content_length);
+	char date[BUFFER_SIZE];
+	struct tm *time_data = gmtime(&now);
+
+	strftime(date, BUFFER_SIZE, "%a, %m %b %G %T %Z", time_data);
+
+	char * headers = calloc(sizeof("HTTP/1.1  \r\nServer: \r\nDate: \r\nContent-Type: \r\nContent-Length: \r\n\r\n") + sizeof(SERVER_ID) + strlen(response_data.content_type) + strlen(date) + strlen(msg_code) + sizeof(long) + sizeof(int) + 1, sizeof(char));
+
+	sprintf(headers, "HTTP/1.1 %d %s\r\nServer: %s\r\nDate: %s\r\nContent-Type: %s\r\nContent-Length: %ld\r\n\r\n", response_data.status_code, msg_code, SERVER_ID, date, response_data.content_type, response_data.content_length);
 
 	//printf("Headers: %s\n", headers);
 
 	// allocatate msg and input reponse parts
 	msg = calloc(strlen(headers) + response_data.content_length + 1, sizeof(char));
-	strncpy(msg, headers, strlen(headers));
+	strcpy(msg, headers);
 
 	memcpy(msg + strlen(headers), response_data.data, response_data.content_length);
 
@@ -615,6 +645,42 @@ int send_response(const struct response response_data, const int connection)
 	return bytes;
 }
 
+/**
+* Executes a cgi script with the filename in the request structure
+*/
+
+char * cgi_script(struct request request_data)
+{
+	printf("Executing cgi script: %s\n", request_data.filename);
+
+	printf("Setting environment variables\n");
+	//putenv("AUTH_TYPE="); // Authentication type
+	putenv("CONTENT_LENGTH=NULL"); // Content Length
+	//putenv("CONTENT_TYPE="); // Content Type
+	putenv("GATEWAY_INTERFACE=CGI/1.1"); // Gateway Interface
+	putenv("PATH_INFO="); // Path Info
+	putenv("PATH_TRANSLATED="); // Path Translated
+	putenv("QUERY_STRING="); // Query String
+	putenv("REMOTE_IDENT="); // Remote Identification
+	putenv("REMOTE_USER="); // Remote User
+	putenv("REQUEST_METHOD="); // Requested Method
+	putenv("SCRIPT_NAME="); // Script Name
+	putenv("SERVER_NAME="); // Server Name
+	putenv("SERVER_PORT="); // Server Port
+	putenv("SERVER_PROTOCOL="); // Server Protocol
+	putenv("SERVER_SOFTWARE="); // Server Software
+
+	printf("Executing script now.\n");
+	system("cd web && ./script.php"); // change into directory and run the script
+
+	printf("Response: %s\n");
+
+}
+
+/**
+* Returns the http error description for a given status code
+* Example: 404 = Not Found
+*/
 char * get_error_msg(int status_code) 
 {
 	switch(status_code) {

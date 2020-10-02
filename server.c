@@ -269,7 +269,9 @@ int server_accept(server_t* server);
 */
 void handle_http(void * args);
 
-char * cgi_script(struct request request_data):
+char * cgi_script(struct request request_data);
+
+char * lua_script(struct request request_data);
 
 /*
 * reads a request
@@ -313,7 +315,7 @@ void load_file(const char * filename, long * fsize, char ** buffer);
 * Main function
 */
 int main() {
-	printf("Sparrow Version 0.1\n");
+	printf("===============================================\n\t\tSparrow Version 0.1\n===============================================\n\n");
 	printf("HTTP Server starting...\n");
 
 	ThreadPool *tm;
@@ -474,10 +476,14 @@ void handle_http(void * args) {
 		// get the string containing the resource from / to ?
 		//printf("File: %s Access: %d\n", request_data.filename, access(request_data.filename, F_OK | R_OK));
 
-		long fsize = 0;
+		long data_size = 0;
 
 		char * file_buffer = NULL; 
-		load_file(request_data.filename, &fsize, &file_buffer);
+		if(strstr(request_data.filename, ".php") != NULL) {
+			file_buffer = cgi_script(request_data);
+		} else {
+			load_file(request_data.filename, &data_size, &file_buffer);
+		}
 
 		if(file_buffer != NULL) { 
 
@@ -511,7 +517,7 @@ void handle_http(void * args) {
 			}
 
 			//response_data.content_type = file_encoding;
-			response_data.content_length = fsize;
+			response_data.content_length = data_size;
 			response_data.status_code = 200;
 			response_data.data = file_buffer;
 
@@ -658,28 +664,56 @@ char * cgi_script(struct request request_data)
 	putenv("CONTENT_LENGTH=NULL"); // Content Length
 	//putenv("CONTENT_TYPE="); // Content Type
 	putenv("GATEWAY_INTERFACE=CGI/1.1"); // Gateway Interface
-	putenv("PATH_INFO="); // Path Info
-	putenv("PATH_TRANSLATED="); // Path Translated
-	putenv("QUERY_STRING="); // Query String
-	putenv("REMOTE_IDENT="); // Remote Identification
-	putenv("REMOTE_USER="); // Remote User
-	putenv("REQUEST_METHOD="); // Requested Method
-	putenv("SCRIPT_NAME="); // Script Name
-	putenv("SERVER_NAME="); // Server Name
-	putenv("SERVER_PORT="); // Server Port
-	putenv("SERVER_PROTOCOL="); // Server Protocol
-	putenv("SERVER_SOFTWARE="); // Server Software
+	putenv("PATH_INFO=script.php"); // Path Info
+	//putenv("PATH_TRANSLATED="); // Path Translated
+	putenv("QUERY_STRING=\"\""); // Query String
+	putenv("REMOTE_ADDR=127.0.0.1");
+	putenv("REMOTE_HOST=NULL");
+	//putenv("REMOTE_IDENT="); // Remote Identification
+	//putenv("REMOTE_USER="); // Remote User
+	putenv("REQUEST_METHOD=GET"); // Requested Method
+	putenv("SCRIPT_NAME=/script.php"); // Script Name
+	putenv("SERVER_NAME=localhost"); // Server Name
+
+	char server_port[20];
+	sprintf(server_port, "SERVER_PORT=%d", PORT);
+	putenv(server_port); // Server Port
+
+	putenv("SERVER_PROTOCOL=HTTP/1.1"); // Server Protocol
+	putenv("SERVER_SOFTWARE=" 
+	SERVER_ID); // Server Software
+	putenv("REDIRECT_STATUS=CGI");
+	putenv("SCRIPT_FILENAME=script.php");
 
 	printf("Executing script now.\n");
-	system("cd web && ./script.php"); // change into directory and run the script
+	FILE *fp = popen("cd web && php-cgi -fscript.php", "r"); // change into directory and run the script
 
-	printf("Response: %s\n");
+	if (fp == NULL) {
+		printf("Failed to run command");
+		return NULL;
+	}
 
+	printf("Response:\n");
+
+	while(!feof(fp)) {
+		printf("%c", fgetc(fp));
+	}
+
+	pclose(fp);
+
+
+	return NULL;
+}
+
+char * lua_script(struct request request_data) 
+{
+	
 }
 
 /**
 * Returns the http error description for a given status code
 * Example: 404 = Not Found
+* TODO: Refactor for cleaner 
 */
 char * get_error_msg(int status_code) 
 {
